@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Search Timeline</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.3/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-100 min-h-screen" x-data="{ 
+    showResults: false,
+    isLoading: false,
+    isDragging: false,
+    results: [],
+    previewImage: null,
+    errorMessage: null,
+    
+    handleFileSelect(event) {
+        const file = event.target.files[0];
+        this.processFile(file);
+    },
+    
+    handleDrop(event) {
+        event.preventDefault();
+        this.isDragging = false;
+        
+        const file = event.dataTransfer.files[0];
+        this.processFile(file);
+    },
+    
+    processFile(file) {
+        this.errorMessage = null;
+        if (file) {
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                this.errorMessage = 'Please upload an image file';
+                return;
+            }
+            
+            // Validate file size (5MB limit)
+            if (file.size > 5 * 1024 * 1024) {
+                this.errorMessage = 'File size should be less than 5MB';
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.previewImage = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    },
+    
+    handleDragOver(event) {
+        event.preventDefault();
+        this.isDragging = true;
+    },
+    
+    handleDragLeave(event) {
+        event.preventDefault();
+        this.isDragging = false;
+    },
+    
+    formatDate(dateString) {
+        return new Date(dateString).toLocaleString();
+    },
+    
+    async handleSubmit(event) {
+        event.preventDefault();
+        if (!this.previewImage) {
+            this.errorMessage = 'Please select an image first';
+            return;
+        }
+        
+        this.isLoading = true;
+        this.errorMessage = null;
+        
+        const formData = new FormData(event.target);
+        
+        try {
+            // Set timeout for request
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            
+            const response = await fetch('/process', {
+                method: 'POST',
+                body: formData,
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                if (response.status === 413) {
+                    throw new Error('File size too large');
+                } else if (response.status === 415) {
+                    throw new Error('Unsupported file type');
+                } else if (response.status === 429) {
+                    throw new Error('Too many requests. Please try again later.');
+                }
+                throw new Error('Server error occurred');
+            }
+            
+            const data = await response.json();
+            
+            if (!data || (data.success !== undefined && !data.success)) {
+                throw new Error(data.error || 'Invalid response from server');
+            }
+            
+            // Transform backend data to match frontend structure
+            this.results = data.timeline.map(result => ({
+                platform: result.platform,
+                user: result.user || 'Unknown',
+                timestamp: this.formatDate(result.date),
+                url: result.url,
+                type: result.type
+            }));
+            
+            // Sort results by date (newest first)
+            this.results.sort((a, b) => 
+                new Date(b.timestamp) - new Date(a.timestamp)
+            );
+            
+            this.showResults = true;
+            
+        } catch (error) {
+            console.error('Error:', error);
+            this.errorMessage = error.message || 'An error occurred while processing your request';
+            
+            if (error.name === 'AbortError') {
+                this.errorMessage = 'Request timed out. Please try again.';
+            } else if (!navigator.onLine) {
+                this.errorMessage = 'No internet connection. Please check your network.';
+            }
+            
+        } finally {
+            this.isLoading = false;
+        }
+    }
+}">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Image Search Timeline</h1>
+            <p class="text-gray-600">Upload an image to find where it appears across the internet</p>
+        </div>
+
+        <!-- Upload Form -->
+        <div class="max-w-md mx-auto bg-white rounded-lg shadow-md p-6 mb-8">
+            <form @submit="handleSubmit" class="space-y-4">
+                <!-- Drag & Drop Zone -->
+                <div
+                    @dragover="handleDragOver"
+                    @dragleave="handleDragLeave"
+                    @drop="handleDrop"
+                    :class="{
+                        'border-blue-500 bg-blue-50': isDragging,
+                        'border-gray-300': !isDragging
+                    }"
+                    class="border-2 border-dashed rounded-lg p-6 transition-colors duration-200"
+                >
+                    <div class="text-center">
+                        <template x-if="!previewImage">
+                            <div class="space-y-4">
+                                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <div>
+                                    <p class="text-gray-600 mb-2">Drag and drop your image here, or</p>
+                                    <label class="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-lg cursor-pointer hover:bg-blue-600 transition-colors">
+                                        <span>Choose File</span>
+                                        <input type="file" name="image" accept="image/*" class="hidden" @change="handleFileSelect">
+                                    </label>
+                                </div>
+                                <p class="text-sm text-gray-500">Supports: JPG, PNG, GIF (max 5MB)</p>
+                            </div>
+                        </template>
+                        <template x-if="previewImage">
+                            <div class="space-y-4">
+                                <img :src="previewImage" class="mx-auto max-h-48 rounded">
+                                <div class="flex justify-center space-x-2">
+                                    <button type="button" @click="previewImage = null" class="px-3 py-1 text-sm text-red-600 hover:text-red-800">Remove</button>
+                                    <label class="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 cursor-pointer">
+                                        Change
+                                        <input type="file" name="image" accept="image/*" class="hidden" @change="handleFileSelect">
+                                    </label>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Error Message -->
+                <div x-show="errorMessage" 
+                     class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
+                     x-text="errorMessage"></div>
+
+                <!-- Submit Button -->
+                <button 
+                    type="submit" 
+                    class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    :disabled="isLoading || !previewImage"
+                >
+                    <template x-if="!isLoading">
+                        <span>Search</span>
+                    </template>
+                    <template x-if="isLoading">
+                        <div class="flex items-center justify-center">
+                            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Processing...
+                        </div>
+                    </template>
+                </button>
+            </form>
+        </div>
+
+        <!-- Results Table -->
+        <div x-show="showResults" x-transition class="max-w-4xl mx-auto">
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h2 class="text-xl font-semibold text-gray-800">Search Results</h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Platform</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="result in results" :key="result.url">
+                                <tr>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="flex items-center">
+                                            <span x-text="result.platform" class="text-sm font-medium text-gray-900"></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm text-gray-900" x-text="result.user"></div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm text-gray-900" x-text="result.timestamp"></div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <a :href="result.url" target="_blank" class="text-blue-600 hover:text-blue-900">View Post</a>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="mt-4 text-center">
+                <button 
+                    @click="showResults = false; previewImage = null" 
+                    class="text-blue-500 hover:text-blue-700 font-medium"
+                >
+                    ← Back to Upload
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
